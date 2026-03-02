@@ -86,8 +86,10 @@ class TikTokSlideshowTool:
         except Exception as e:
             return f"ПОМИЛКА при генерації слайду {slide_number}: {str(e)}"
 
-    def publish_video(self, selected_slide_numbers: list, post_description: str) -> str:
-        """Перетворює картинки на відео і ПУБЛІКУЄ одразу в TikTok."""
+    def upload_video(self, selected_slide_numbers: list, post_description: str, action: str) -> str:
+        """Перетворює картинки на відео і завантажує в TikTok (у чернетки або одразу публікує).
+        Параметр action має бути 'draft' або 'publish'.
+        """
         if not os.path.exists(self.state_file):
             return "ПОМИЛКА: Файл tiktok_state.json не знайдено."
 
@@ -117,25 +119,30 @@ class TikTokSlideshowTool:
 
                 print("Завантажую змонтоване відео...")
                 page.locator("input[type='file']").first.set_input_files(video_file)
-                time.sleep(20) # Чекаємо, поки відео обробиться
+                time.sleep(20) 
                 
                 editor = page.locator(".public-DraftEditor-content")
                 editor.click()
                 editor.fill(post_description)
                 time.sleep(2)
                 
-                # 🔥 ЗМІНЕНО: Натискаємо кнопку Post (Опублікувати) замість Draft 🔥
-                post_button = page.locator("button:has-text('Post'), button:has-text('Опублікувати')").first
-                post_button.click()
+                # РОЗДІЛЕННЯ ЛОГІКИ: Чернетка чи Публікація
+                if action.lower() == "publish":
+                    action_button = page.locator("button:has-text('Post'), button:has-text('Опублікувати')").first
+                    action_button.click()
+                    time.sleep(15)
+                    status_msg = "ОПУБЛІКОВАНО В TIKTOK"
+                else:
+                    action_button = page.locator("button:has-text('Save to draft'), button:has-text('Зберегти в чернетки'), button:has-text('Чернетка')").first
+                    action_button.click()
+                    time.sleep(10)
+                    status_msg = "ЗБЕРЕЖЕНО В ЧЕРНЕТКИ (додай музику з телефону!)"
                 
-                # Даємо 15 секунд на те, щоб відео відправилося на сервери TikTok
-                time.sleep(15)
-                
-                success_path = os.path.join(self.output_dir, "success_published.png")
+                success_path = os.path.join(self.output_dir, f"success_{action}.png")
                 page.screenshot(path=success_path)
                 browser.close()
                 
-                return f"УСПІХ: ВІДЕО ОПУБЛІКОВАНО В TIKTOK! ВІДПРАВ ФАЙЛ {success_path} КОРИСТУВАЧУ. Також ВІДПРАВ ФАЙЛ {video_file} КОРИСТУВАЧУ."
+                return f"УСПІХ: ВІДЕО {status_msg}! ВІДПРАВ ФАЙЛ {success_path} КОРИСТУВАЧУ. Також ВІДПРАВ ФАЙЛ {video_file} КОРИСТУВАЧУ."
                 
         except Exception as e:
             return f"КРИТИЧНА ПОМИЛКА: {str(e)}"
