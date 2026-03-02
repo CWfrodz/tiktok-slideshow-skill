@@ -95,7 +95,6 @@ class TikTokSlideshowTool:
             return f"ПОМИЛКА при генерації слайду {slide_number}: {str(e)}"
 
     def save_to_drafts(self, selected_slide_numbers: list, post_description: str) -> str:
-        # Без змін, та сама логіка, що й в попередній версії
         if not os.path.exists(self.state_file):
             return "ПОМИЛКА: Файл tiktok_state.json не знайдено."
 
@@ -105,6 +104,7 @@ class TikTokSlideshowTool:
                 return f"ПОМИЛКА: Файл {f} не знайдено."
 
         try:
+            # 1. Зшиваємо картинки в ОДНЕ відео
             video_file = self._create_video_from_images(image_files)
 
             with sync_playwright() as p:
@@ -123,9 +123,12 @@ class TikTokSlideshowTool:
                     browser.close()
                     return f"ПОМИЛКА ЛОГІНУ: Сесія злетіла."
 
+                # 2. Завантажуємо ТІЛЬКИ ЦЕЙ ОДИН ВІДЕОФАЙЛ (ніяких циклів і кнопок "додати ще")
+                print("Завантажую змонтоване відео...")
                 page.locator("input[type='file']").first.set_input_files(video_file)
-                time.sleep(20) 
+                time.sleep(20) # Чекаємо, поки відео обробиться ТікТоком
                 
+                # 3. Додаємо опис і зберігаємо
                 editor = page.locator(".public-DraftEditor-content")
                 editor.click()
                 editor.fill(post_description)
