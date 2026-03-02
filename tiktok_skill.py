@@ -24,7 +24,6 @@ class TikTokSlideshowTool:
             for img in image_paths:
                 clean_path = img.replace("\\", "/")
                 f.write(f"file '{clean_path}'\n")
-                # 🔥 ЗМІНЕНО: 2 секунди на фото
                 f.write("duration 2\n") 
             
             if image_paths:
@@ -41,7 +40,6 @@ class TikTokSlideshowTool:
         return video_path
 
     def generate_slide(self, slide_number: int, prompt: str, text_overlay: str) -> str:
-        """Генерує картинку, накладає текст у куток і зберігає."""
         encoded_prompt = urllib.parse.quote(prompt)
         url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={self.current_style_seed}"
         
@@ -49,7 +47,6 @@ class TikTokSlideshowTool:
             response = requests.get(url, timeout=30)
             response.raise_for_status()
             
-            # Відкриваємо зображення для редагування
             image = Image.open(io.BytesIO(response.content)).convert("RGBA")
             overlay = Image.new('RGBA', image.size, (255, 255, 255, 0))
             draw = ImageDraw.Draw(overlay)
@@ -59,42 +56,38 @@ class TikTokSlideshowTool:
             except IOError:
                 font = ImageFont.load_default()
             
-            # Розбиваємо текст на рядки (щоб не виліз за краї)
             lines = textwrap.wrap(text_overlay, width=20)
             line_height = 60
             total_text_height = len(lines) * line_height
             
-            # Координати: лівий нижній кут (але вище інтерфейсу TikTok)
             start_x = 50
             start_y = 1400 
             padding = 20
             
-            # Малюємо напівпрозору плашку для читабельності
             draw.rectangle(
                 [start_x - padding, start_y - padding, 
                  start_x + 600, start_y + total_text_height + padding],
-                fill=(0, 0, 0, 160) # Чорний з прозорістю
+                fill=(0, 0, 0, 160) 
             )
             
-            # Пишемо текст
             current_y = start_y
             for line in lines:
                 draw.text((start_x, current_y), line, font=font, fill="white")
                 current_y += line_height
                 
-            # Зводимо шари і зберігаємо
             final_image = Image.alpha_composite(image, overlay).convert("RGB")
             
             filename = f"slide_{slide_number}.jpg"
             filepath = os.path.join(self.output_dir, filename)
             final_image.save(filepath)
             
-            return f"Слайд {slide_number} успішно згенеровано з текстом '{text_overlay}'. ВІДПРАВ ФАЙЛ {filepath} КОРИСТУВАЧУ."
+            return f"Слайд {slide_number} успішно згенеровано. ВІДПРАВ ФАЙЛ {filepath} КОРИСТУВАЧУ."
             
         except Exception as e:
             return f"ПОМИЛКА при генерації слайду {slide_number}: {str(e)}"
 
-    def save_to_drafts(self, selected_slide_numbers: list, post_description: str) -> str:
+    def publish_video(self, selected_slide_numbers: list, post_description: str) -> str:
+        """Перетворює картинки на відео і ПУБЛІКУЄ одразу в TikTok."""
         if not os.path.exists(self.state_file):
             return "ПОМИЛКА: Файл tiktok_state.json не знайдено."
 
@@ -104,7 +97,6 @@ class TikTokSlideshowTool:
                 return f"ПОМИЛКА: Файл {f} не знайдено."
 
         try:
-            # 1. Зшиваємо картинки в ОДНЕ відео
             video_file = self._create_video_from_images(image_files)
 
             with sync_playwright() as p:
@@ -123,26 +115,27 @@ class TikTokSlideshowTool:
                     browser.close()
                     return f"ПОМИЛКА ЛОГІНУ: Сесія злетіла."
 
-                # 2. Завантажуємо ТІЛЬКИ ЦЕЙ ОДИН ВІДЕОФАЙЛ (ніяких циклів і кнопок "додати ще")
                 print("Завантажую змонтоване відео...")
                 page.locator("input[type='file']").first.set_input_files(video_file)
-                time.sleep(20) # Чекаємо, поки відео обробиться ТікТоком
+                time.sleep(20) # Чекаємо, поки відео обробиться
                 
-                # 3. Додаємо опис і зберігаємо
                 editor = page.locator(".public-DraftEditor-content")
                 editor.click()
                 editor.fill(post_description)
                 time.sleep(2)
                 
-                draft_button = page.locator("button:has-text('Save to draft'), button:has-text('Зберегти в чернетки'), button:has-text('Чернетка')").first
-                draft_button.click()
-                time.sleep(10)
+                # 🔥 ЗМІНЕНО: Натискаємо кнопку Post (Опублікувати) замість Draft 🔥
+                post_button = page.locator("button:has-text('Post'), button:has-text('Опублікувати')").first
+                post_button.click()
                 
-                success_path = os.path.join(self.output_dir, "success_draft.png")
+                # Даємо 15 секунд на те, щоб відео відправилося на сервери TikTok
+                time.sleep(15)
+                
+                success_path = os.path.join(self.output_dir, "success_published.png")
                 page.screenshot(path=success_path)
                 browser.close()
                 
-                return f"УСПІХ: ВІДЕО збережено в Чернетки TikTok! ВІДПРАВ ФАЙЛ {success_path} КОРИСТУВАЧУ. Також ВІДПРАВ ФАЙЛ {video_file} КОРИСТУВАЧУ."
+                return f"УСПІХ: ВІДЕО ОПУБЛІКОВАНО В TIKTOK! ВІДПРАВ ФАЙЛ {success_path} КОРИСТУВАЧУ. Також ВІДПРАВ ФАЙЛ {video_file} КОРИСТУВАЧУ."
                 
         except Exception as e:
             return f"КРИТИЧНА ПОМИЛКА: {str(e)}"
