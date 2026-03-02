@@ -43,48 +43,69 @@ class TikTokSlideshowTool:
         encoded_prompt = urllib.parse.quote(prompt)
         url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={self.current_style_seed}"
         
-        try:
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            
-            image = Image.open(io.BytesIO(response.content)).convert("RGBA")
-            overlay = Image.new('RGBA', image.size, (255, 255, 255, 0))
-            draw = ImageDraw.Draw(overlay)
-            
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                font = ImageFont.truetype("arial.ttf", 50)
-            except IOError:
-                font = ImageFont.load_default()
-            
-            lines = textwrap.wrap(text_overlay, width=20)
-            line_height = 60
-            total_text_height = len(lines) * line_height
-            
-            start_x = 50
-            start_y = 1400 
-            padding = 20
-            
-            draw.rectangle(
-                [start_x - padding, start_y - padding, 
-                 start_x + 600, start_y + total_text_height + padding],
-                fill=(0, 0, 0, 160) 
-            )
-            
-            current_y = start_y
-            for line in lines:
-                draw.text((start_x, current_y), line, font=font, fill="white")
-                current_y += line_height
+                # Пауза 5 секунд перед кожним новим слайдом, щоб не дратувати Cloudflare
+                if slide_number > 1:
+                    time.sleep(5)
                 
-            final_image = Image.alpha_composite(image, overlay).convert("RGB")
-            
-            filename = f"slide_{slide_number}.jpg"
-            filepath = os.path.join(self.output_dir, filename)
-            final_image.save(filepath)
-            
-            return f"Слайд {slide_number} успішно згенеровано. ВІДПРАВ ФАЙЛ {filepath} КОРИСТУВАЧУ."
-            
-        except Exception as e:
-            return f"ПОМИЛКА при генерації слайду {slide_number}: {str(e)}"
+                print(f"Генерую слайд {slide_number} (спроба {attempt + 1})...")
+                response = requests.get(url, timeout=45)
+                
+                # Перехоплюємо помилки Cloudflare (Rate Limit)
+                if response.status_code in [429, 530, 1033]:
+                    print(f"API ліміт (Помилка {response.status_code}). Чекаю 15 секунд...")
+                    time.sleep(15)
+                    continue # Пробуємо ще раз
+                
+                response.raise_for_status()
+                
+                # --- Далі йде вже знайома логіка малювання тексту ---
+                image = Image.open(io.BytesIO(response.content)).convert("RGBA")
+                overlay = Image.new('RGBA', image.size, (255, 255, 255, 0))
+                draw = ImageDraw.Draw(overlay)
+                
+                try:
+                    font = ImageFont.truetype("arial.ttf", 50)
+                except IOError:
+                    font = ImageFont.load_default()
+                
+                lines = textwrap.wrap(text_overlay, width=20)
+                line_height = 60
+                total_text_height = len(lines) * line_height
+                
+                start_x = 50
+                start_y = 1400 
+                padding = 20
+                
+                draw.rectangle(
+                    [start_x - padding, start_y - padding, 
+                     start_x + 600, start_y + total_text_height + padding],
+                    fill=(0, 0, 0, 160) 
+                )
+                
+                current_y = start_y
+                for line in lines:
+                    draw.text((start_x, current_y), line, font=font, fill="white")
+                    current_y += line_height
+                    
+                final_image = Image.alpha_composite(image, overlay).convert("RGB")
+                
+                filename = f"slide_{slide_number}.jpg"
+                filepath = os.path.join(self.output_dir, filename)
+                final_image.save(filepath)
+                
+                return f"Слайд {slide_number} успішно згенеровано. ВІДПРАВ ФАЙЛ {filepath} КОРИСТУВАЧУ."
+                
+            except Exception as e:
+                # Якщо це остання спроба, повертаємо помилку агенту
+                if attempt == max_retries - 1:
+                    return f"ПОМИЛКА при генерації слайду {slide_number} після {max_retries} спроб: {str(e)}"
+                
+                # Інакше чекаємо і пробуємо ще раз
+                print(f"Збій мережі: {e}. Чекаю 10 секунд перед повтором...")
+                time.sleep(10)
 
     def upload_video(self, selected_slide_numbers: list, post_description: str, action: str) -> str:
         """Перетворює картинки на відео і завантажує в TikTok (у чернетки або одразу публікує).
