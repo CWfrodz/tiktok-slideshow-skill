@@ -15,20 +15,17 @@ class TikTokSlideshowTool:
         self.state_file = os.path.join(self.output_dir, "tiktok_state.json")
 
     def _add_text_to_images(self, image_paths: list, overlay_texts: list) -> list:
-        """Накладає адаптивний відцентрований текст на картинки."""
         processed_paths = []
         for i, (img_path, raw_text) in enumerate(zip(image_paths, overlay_texts)):
             if not os.path.exists(img_path):
                 continue
             try:
-                # Очищаємо текст від емодзі (щоб не було квадратів)
                 clean_text = re.sub(r'[^a-zA-Zа-яА-ЯіІїЇєЄґҐ0-9\s.,!?\'"()\-+%$€]', '', raw_text)
                 
                 image = Image.open(img_path).convert("RGBA")
                 overlay = Image.new('RGBA', image.size, (255, 255, 255, 0))
                 draw = ImageDraw.Draw(overlay)
                 
-                # Завантажуємо шрифт (з безпечним фолбеком)
                 try:
                     font = ImageFont.truetype("arial.ttf", 55)
                 except IOError:
@@ -39,7 +36,6 @@ class TikTokSlideshowTool:
                 
                 lines = textwrap.wrap(clean_text, width=25)
                 
-                # 🔥 Використовуємо ТІЛЬКИ textbbox для уникнення падінь у Pillow 10+
                 bbox_test = draw.textbbox((0, 0), "Ag", font=font)
                 line_height = bbox_test[3] - bbox_test[1] + 15
                     
@@ -62,10 +58,8 @@ class TikTokSlideshowTool:
                 box_y1 = start_y - padding_y
                 box_y2 = start_y + total_text_height + padding_y
                 
-                # Малюємо напівпрозору чорну плашку
                 draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill=(0, 0, 0, 180))
                 
-                # Пишемо відцентрований текст
                 current_y = start_y
                 for line in lines:
                     bbox = draw.textbbox((0, 0), line, font=font)
@@ -87,7 +81,6 @@ class TikTokSlideshowTool:
         return processed_paths
 
     def _create_video_from_images(self, image_paths: list, output_filename="final_slideshow.mp4") -> str:
-        """Зшиває картинки у відео (2 сек/кадр) через FFmpeg."""
         video_path = os.path.join(self.output_dir, output_filename)
         list_file = os.path.join(self.output_dir, "ffmpeg_list.txt")
 
@@ -109,8 +102,9 @@ class TikTokSlideshowTool:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return video_path
 
-    def upload_video(self, image_paths: list, overlay_texts: list, post_description: str, action: str) -> str:
-        """Обробляє фото, монтує відео та завантажує в TikTok."""
+    # 🔥 ОНОВЛЕНО: Додано параметр song_name
+    def upload_video(self, image_paths: list, overlay_texts: list, post_description: str, action: str, song_name: str = "") -> str:
+        """Обробляє фото, монтує відео, ДОДАЄ МУЗИКУ та завантажує в TikTok."""
         if not os.path.exists(self.state_file):
             return "ПОМИЛКА: Файл tiktok_state.json не знайдено."
 
@@ -146,6 +140,30 @@ class TikTokSlideshowTool:
                 page.locator("input[type='file']").first.set_input_files(video_file)
                 time.sleep(25) 
                 
+                # 🔥 НОВЕ: Логіка пошуку та додавання музики 🔥
+                if song_name and song_name.lower() not in ["none", "немає", "без музики", "ні"]:
+                    try:
+                        print(f"Шукаю музику: {song_name}...")
+                        # Натискаємо кнопку Sounds
+                        sounds_btn = page.locator("text='Sounds', text='Звуки', div:has-text('Sounds')").locator("visible=true").first
+                        sounds_btn.click(timeout=10000)
+                        time.sleep(3)
+                        
+                        # Вводимо назву пісні у пошук
+                        search_input = page.locator("input[placeholder*='Search'], input[type='search'], input[type='text']").last
+                        search_input.fill(song_name)
+                        search_input.press("Enter")
+                        time.sleep(6) # Чекаємо, поки ТікТок знайде треки
+                        
+                        # Натискаємо кнопку Use (Використати) на першому результаті
+                        use_btn = page.locator("button:has-text('Use'), button:has-text('Використати')").first
+                        use_btn.click(timeout=10000)
+                        print("Музику успішно застосовано!")
+                        time.sleep(3)
+                    except Exception as music_err:
+                        print(f"УВАГА: Не вдалося додати музику '{song_name}', продовжую без неї. Помилка: {music_err}")
+                
+                # Введення опису
                 editor = page.locator(".public-DraftEditor-content")
                 editor.click()
                 editor.fill(post_description)
@@ -153,16 +171,11 @@ class TikTokSlideshowTool:
                 print("Чекаю 15 секунд на фонові перевірки TikTok...")
                 time.sleep(15)
                 
-                # 🔥 НОВЕ: Надійно знаходимо кнопку і ПРИМУСОВО скролимо екран до неї
                 try:
-                    # Знаходимо останню кнопку Post
                     post_btn = page.locator("button", has_text=re.compile(r"Post|Опублікувати")).last
-                    
-                    # Примусовий скрол інтерфейсу, щоб кнопка точно вилізла на екран
                     post_btn.scroll_into_view_if_needed()
-                    time.sleep(2) # Даємо час інтерфейсу відмалюватися після скролу
+                    time.sleep(2) 
                     
-                    # Б'ємо по кнопці
                     post_btn.click(force=True)
                         
                     print("Натиснуто POST. Чекаю 25 секунд для завершення публікації...")
@@ -176,7 +189,7 @@ class TikTokSlideshowTool:
                 page.screenshot(path=success_path)
                 browser.close()
                 
-                return f"УСПІХ: ВІДЕО {status_msg}! ВІДПРАВ ФАЙЛ {success_path} КОРИСТУВАЧУ В ЧАТ ТЕЛЕГРАМУ. Також ВІДПРАВ ФАЙЛ {video_file} КОРИСТУВАЧУ В ЧАТ ТЕЛЕГРАМУ."
+                return f"УСПІХ: ВІДЕО {status_msg}! ВІДПРАВ ФАЙЛ {success_path} КОРИСТУВАЧУ В ТЕЛЕГРАМ ЧАТ. Також ВІДПРАВ ФАЙЛ {video_file} КОРИСТУВАЧУ В ТЕЛЕГРАМ ЧАТ."
                 
         except Exception as e:
             return f"КРИТИЧНА ПОМИЛКА: {str(e)}"
