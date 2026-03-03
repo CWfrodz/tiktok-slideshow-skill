@@ -9,12 +9,40 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 from playwright.sync_api import sync_playwright
 
+AVAILABLE_MODELS = {
+    "flux": "Flux — дефолтна модель, якісні реалістичні зображення",
+    "klein": "Klein — швидка та легка модель",
+    "klein-large": "Klein Large — покращена версія Klein з більшою деталізацією",
+    "gptimage": "GPT Image — модель від OpenAI, фотореалістичні зображення найвищої якості",
+    "grok-imagine": "Grok Imagine — нова модель від xAI, креативні та яскраві зображення",
+    "imagen-4": "Imagen 4 — модель від Google, чудова композиція та стилізація",
+    "zimage": "Z-Image — швидка генерація з акцентом на чіткість",
+}
+
 class TikTokSlideshowTool:
     def __init__(self):
         self.output_dir = os.path.join(os.getcwd(), "tiktok_exports")
         os.makedirs(self.output_dir, exist_ok=True)
         self.current_style_seed = random.randint(1, 9999999)
         self.state_file = os.path.join(self.output_dir, "tiktok_state.json")
+        self.current_model = "flux"
+
+    def list_models(self) -> str:
+        result = "🎨 Доступні моделі для генерації:\n\n"
+        for i, (model_id, desc) in enumerate(AVAILABLE_MODELS.items(), 1):
+            active = " ✅" if model_id == self.current_model else ""
+            result += f"{i}. {desc} (`{model_id}`){active}\n"
+        result += "\nОбери номер або ID моделі."
+        return result
+
+    def set_model(self, model_id: str) -> str:
+        model_id = model_id.lower().strip()
+        if model_id not in AVAILABLE_MODELS:
+            available = ", ".join(AVAILABLE_MODELS.keys())
+            return f"ПОМИЛКА: Модель '{model_id}' не знайдена. Доступні: {available}"
+        self.current_model = model_id
+        self.current_style_seed = random.randint(1, 9999999)
+        return f"Модель змінено на {AVAILABLE_MODELS[model_id]} (seed: {self.current_style_seed})"
 
     def _create_video_from_images(self, image_paths: list, output_filename="final_slideshow.mp4") -> str:
         video_path = os.path.join(self.output_dir, output_filename)
@@ -41,7 +69,7 @@ class TikTokSlideshowTool:
 
     def generate_slide(self, slide_number: int, prompt: str, text_overlay: str) -> str:
         encoded_prompt = urllib.parse.quote(prompt)
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={self.current_style_seed}"
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={self.current_style_seed}&model={self.current_model}"
         
         max_retries = 3
         for attempt in range(max_retries):
@@ -50,7 +78,7 @@ class TikTokSlideshowTool:
                 if slide_number > 1:
                     time.sleep(5)
                 
-                print(f"Генерую слайд {slide_number} (спроба {attempt + 1})...")
+                print(f"Генерую слайд {slide_number} через {self.current_model} (спроба {attempt + 1})...")
                 response = requests.get(url, timeout=45)
                 
                 # Перехоплюємо помилки Cloudflare (Rate Limit)

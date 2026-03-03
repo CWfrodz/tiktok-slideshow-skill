@@ -1,0 +1,16 @@
+# Експортовані файли
+tiktok_exports/
+*.jpg
+*.png
+*.mp4
+
+# Файл стану авторизації (секретний)
+tiktok_state.json
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# FFmpeg тимчасові файли
+ffmpeg_list.txt
