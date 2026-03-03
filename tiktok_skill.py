@@ -37,7 +37,7 @@ class TikTokSlideshowTool:
                 lines = textwrap.wrap(clean_text, width=25)
                 
                 bbox_test = draw.textbbox((0, 0), "Ag", font=font)
-                line_height = bbox_test[3] - bbox_test[1] + 15
+                line_height = bbox_test[3] - bbox_test[1] + 35
                     
                 total_text_height = len(lines) * line_height
                 
