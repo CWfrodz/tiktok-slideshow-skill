@@ -31,6 +31,14 @@ class TikTokSlideshowTool:
         self._last_failure_time = 0.0
         self._COOLDOWN_SECONDS = 120  # 2 хвилини кулдаун після серії помилок
         self._MAX_CONSECUTIVE_FAILURES = 3  # Після 3 помилок підряд — повний стоп
+        self._stop_file = os.path.join(self.output_dir, "STOP")
+
+    def _check_stop(self) -> bool:
+        """Перевіряє чи користувач створив файл STOP для негайної зупинки."""
+        if os.path.exists(self._stop_file):
+            os.remove(self._stop_file)
+            return True
+        return False
 
     def list_models(self) -> str:
         result = "🎨 Доступні моделі для генерації:\n\n"
@@ -73,10 +81,12 @@ class TikTokSlideshowTool:
         return video_path
 
     def generate_slide(self, slide_number: int, prompt: str, text_overlay: str) -> str:
+        # === ПЕРЕВІРКА STOP-ФАЙЛУ ===
+        if self._check_stop():
+            return "⛔ СТОП від користувача. Генерація СКАСОВАНА. НЕ продовжуй. Повідом користувача і ЧЕКАЙ його команди."
+        
         # === ЗАХИСТ ВІД БЕЗКІНЕЧНОГО ЦИКЛУ ===
         now = time.time()
-        
-        # Якщо було занадто багато помилок підряд — блокуємо виклики
         if self._consecutive_failures >= self._MAX_CONSECUTIVE_FAILURES:
             time_since_fail = now - self._last_failure_time
             if time_since_fail < self._COOLDOWN_SECONDS:
@@ -84,7 +94,6 @@ class TikTokSlideshowTool:
                 return (f"⛔ СТОП. Генерація ЗАБЛОКОВАНА на {remaining} секунд через {self._consecutive_failures} помилок підряд. "
                         f"НЕ ВИКЛИКАЙ цей інструмент знову. Повідом користувача про проблему і ЧЕКАЙ його команди.")
             else:
-                # Кулдаун минув, скидаємо лічильник
                 self._consecutive_failures = 0
         
         encoded_prompt = urllib.parse.quote(prompt)
@@ -96,12 +105,17 @@ class TikTokSlideshowTool:
                 if slide_number > 1:
                     time.sleep(5)
                 
+                if self._check_stop():
+                    return "⛔ СТОП від користувача. Генерація СКАСОВАНА. НЕ продовжуй. ЧЕКАЙ команди."
+                
                 print(f"Генерую слайд {slide_number} через {self.current_model} (спроба {attempt + 1}/{max_retries})...")
                 response = requests.get(url, timeout=45)
                 
                 if response.status_code in [429, 530, 1033]:
                     print(f"API ліміт (Помилка {response.status_code}). Чекаю 15 секунд...")
                     time.sleep(15)
+                    if self._check_stop():
+                        return "⛔ СТОП від користувача. Генерація СКАСОВАНА під час очікування. ЧЕКАЙ команди."
                     continue
                 
                 response.raise_for_status()
@@ -155,6 +169,8 @@ class TikTokSlideshowTool:
                 
                 print(f"Збій мережі: {e}. Чекаю 10 секунд перед повтором...")
                 time.sleep(10)
+                if self._check_stop():
+                    return "⛔ СТОП від користувача. Генерація СКАСОВАНА. ЧЕКАЙ команди."
 
     def upload_video(self, selected_slide_numbers: list, post_description: str, action: str) -> str:
         if not os.path.exists(self.state_file):
