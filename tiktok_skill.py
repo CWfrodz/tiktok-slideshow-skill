@@ -15,40 +15,40 @@ class TikTokSlideshowTool:
         self.state_file = os.path.join(self.output_dir, "tiktok_state.json")
 
     def _add_text_to_images(self, image_paths: list, overlay_texts: list) -> list:
-        """Накладає текст на картинки (з очищенням від емодзі та квадратиків)."""
+        """Накладає адаптивний відцентрований текст на картинки."""
         processed_paths = []
         for i, (img_path, raw_text) in enumerate(zip(image_paths, overlay_texts)):
             if not os.path.exists(img_path):
                 continue
             try:
-                # 🔥 НОВЕ: Жорстко вирізаємо всі емодзі та невідомі символи. 
-                # Залишаємо лише українські/англійські літери, цифри та базову пунктуацію.
+                # Очищаємо текст від емодзі (щоб не було квадратів)
                 clean_text = re.sub(r'[^a-zA-Zа-яА-ЯіІїЇєЄґҐ0-9\s.,!?\'"()\-+%$€]', '', raw_text)
                 
                 image = Image.open(img_path).convert("RGBA")
                 overlay = Image.new('RGBA', image.size, (255, 255, 255, 0))
                 draw = ImageDraw.Draw(overlay)
                 
+                # Завантажуємо шрифт (з безпечним фолбеком)
                 try:
                     font = ImageFont.truetype("arial.ttf", 55)
                 except IOError:
-                    font = ImageFont.load_default()
+                    try:
+                        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 55)
+                    except IOError:
+                        font = ImageFont.load_default()
                 
                 lines = textwrap.wrap(clean_text, width=25)
                 
-                if hasattr(draw, 'textbbox'):
-                    line_height = draw.textbbox((0, 0), "Ag", font=font)[3] + 15
-                else:
-                    line_height = draw.textsize("Ag", font=font)[1] + 15
+                # 🔥 Використовуємо ТІЛЬКИ textbbox для уникнення падінь у Pillow 10+
+                bbox_test = draw.textbbox((0, 0), "Ag", font=font)
+                line_height = bbox_test[3] - bbox_test[1] + 15
                     
                 total_text_height = len(lines) * line_height
                 
                 max_line_width = 0
                 for line in lines:
-                    if hasattr(draw, 'textbbox'):
-                        lw = draw.textbbox((0, 0), line, font=font)[2] - draw.textbbox((0, 0), line, font=font)[0]
-                    else:
-                        lw = draw.textsize(line, font=font)[0]
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    lw = bbox[2] - bbox[0]
                     if lw > max_line_width:
                         max_line_width = lw
                 
@@ -62,15 +62,14 @@ class TikTokSlideshowTool:
                 box_y1 = start_y - padding_y
                 box_y2 = start_y + total_text_height + padding_y
                 
+                # Малюємо напівпрозору чорну плашку
                 draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill=(0, 0, 0, 180))
                 
+                # Пишемо відцентрований текст
                 current_y = start_y
                 for line in lines:
-                    if hasattr(draw, 'textbbox'):
-                        lw = draw.textbbox((0, 0), line, font=font)[2] - draw.textbbox((0, 0), line, font=font)[0]
-                    else:
-                        lw = draw.textsize(line, font=font)[0]
-                        
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    lw = bbox[2] - bbox[0]
                     line_x = (image_width - lw) // 2
                     draw.text((line_x, current_y), line, font=font, fill="white")
                     current_y += line_height
@@ -82,7 +81,7 @@ class TikTokSlideshowTool:
                 final_image.save(filepath)
                 processed_paths.append(filepath)
             except Exception as e:
-                print(f"Помилка обробки {img_path}: {e}")
+                print(f"Помилка обробки тексту для {img_path}: {e}")
                 processed_paths.append(img_path) 
                 
         return processed_paths
@@ -151,25 +150,23 @@ class TikTokSlideshowTool:
                 editor.click()
                 editor.fill(post_description)
                 
-                # 🔥 НОВЕ: Чекаємо 15 секунд, поки ТікТок проведе перевірку на авторські права
                 print("Чекаю 15 секунд на фонові перевірки TikTok...")
                 time.sleep(15)
                 
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(2)
-                
-                # 🔥 НОВЕ: Точний пошук кнопок. ТікТок прибрав кнопку Чернетки, тому ми завжди намагаємося публікувати
+                # 🔥 НОВЕ: Надійно знаходимо кнопку і ПРИМУСОВО скролимо екран до неї
                 try:
-                    # Шукаємо кнопку, яка має ТОЧНО текст "Post" або "Опублікувати" (щоб не натиснути на "When to post")
-                    post_btn = page.locator('button:text-is("Post"), button:text-is("Опублікувати")').first
-                    if post_btn.is_visible():
-                        post_btn.click(force=True)
-                    else:
-                        # Запасний варіант: беремо останню кнопку з таким текстом
-                        page.locator("button", has_text=re.compile(r"Post|Опублікувати")).last.click(force=True)
+                    # Знаходимо останню кнопку Post
+                    post_btn = page.locator("button", has_text=re.compile(r"Post|Опублікувати")).last
+                    
+                    # Примусовий скрол інтерфейсу, щоб кнопка точно вилізла на екран
+                    post_btn.scroll_into_view_if_needed()
+                    time.sleep(2) # Даємо час інтерфейсу відмалюватися після скролу
+                    
+                    # Б'ємо по кнопці
+                    post_btn.click(force=True)
                         
                     print("Натиснуто POST. Чекаю 25 секунд для завершення публікації...")
-                    time.sleep(25) # Чекаємо, поки відео фізично відправиться на сервер
+                    time.sleep(25) 
                     status_msg = "ОПУБЛІКОВАНО В TIKTOK"
                 except Exception as e:
                     print(f"Помилка натискання кнопки POST: {e}")
