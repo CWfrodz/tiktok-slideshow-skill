@@ -2,6 +2,7 @@ import os
 import time
 import subprocess
 import textwrap
+import re
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import sync_playwright
 
@@ -14,14 +15,15 @@ class TikTokSlideshowTool:
         self.state_file = os.path.join(self.output_dir, "tiktok_state.json")
 
     def _add_text_to_images(self, image_paths: list, overlay_texts: list) -> list:
-        """Накладає адаптивний відцентрований текст на картинки."""
+        """Накладає текст на картинки (з очищенням від емодзі та квадратиків)."""
         processed_paths = []
         for i, (img_path, raw_text) in enumerate(zip(image_paths, overlay_texts)):
             if not os.path.exists(img_path):
                 continue
             try:
-                # Очищаємо текст від емодзі та складних символів (залишаємо кирилицю, латиницю, базову пунктуацію)
-                text = ''.join(c for c in raw_text if ord(c) < 0x2600)
+                # 🔥 НОВЕ: Жорстко вирізаємо всі емодзі та невідомі символи. 
+                # Залишаємо лише українські/англійські літери, цифри та базову пунктуацію.
+                clean_text = re.sub(r'[^a-zA-Zа-яА-ЯіІїЇєЄґҐ0-9\s.,!?\'"()\-+%$€]', '', raw_text)
                 
                 image = Image.open(img_path).convert("RGBA")
                 overlay = Image.new('RGBA', image.size, (255, 255, 255, 0))
@@ -32,10 +34,8 @@ class TikTokSlideshowTool:
                 except IOError:
                     font = ImageFont.load_default()
                 
-                # Розбиваємо текст на рядки (максимум 25 символів у рядку, щоб точно влізло в ширину екрана)
-                lines = textwrap.wrap(text, width=25)
+                lines = textwrap.wrap(clean_text, width=25)
                 
-                # Універсальне визначення висоти рядка для різних версій Pillow
                 if hasattr(draw, 'textbbox'):
                     line_height = draw.textbbox((0, 0), "Ag", font=font)[3] + 15
                 else:
@@ -43,7 +43,6 @@ class TikTokSlideshowTool:
                     
                 total_text_height = len(lines) * line_height
                 
-                # Знаходимо найширший рядок, щоб підігнати під нього чорну плашку
                 max_line_width = 0
                 for line in lines:
                     if hasattr(draw, 'textbbox'):
@@ -54,20 +53,17 @@ class TikTokSlideshowTool:
                         max_line_width = lw
                 
                 image_width = 1080
-                start_y = 1200 # Висота розміщення (щоб не перекривало опис відео в ТікТоці)
+                start_y = 1200 
                 padding_x = 40
                 padding_y = 30
                 
-                # Координати адаптивної чорної плашки по центру
                 box_x1 = max(0, (image_width - max_line_width) // 2 - padding_x)
                 box_x2 = min(image_width, (image_width + max_line_width) // 2 + padding_x)
                 box_y1 = start_y - padding_y
                 box_y2 = start_y + total_text_height + padding_y
                 
-                # Малюємо плашку
                 draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill=(0, 0, 0, 180))
                 
-                # Пишемо ідеально відцентрований текст
                 current_y = start_y
                 for line in lines:
                     if hasattr(draw, 'textbbox'):
@@ -111,12 +107,11 @@ class TikTokSlideshowTool:
             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", video_path
         ]
         
-        print("Монтую відео через FFmpeg...")
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return video_path
 
     def upload_video(self, image_paths: list, overlay_texts: list, post_description: str, action: str) -> str:
-        """Обробляє фото, монтує відео та завантажує в TikTok (Чернетка/Публікація)."""
+        """Обробляє фото, монтує відео та завантажує в TikTok."""
         if not os.path.exists(self.state_file):
             return "ПОМИЛКА: Файл tiktok_state.json не знайдено."
 
@@ -155,23 +150,32 @@ class TikTokSlideshowTool:
                 editor = page.locator(".public-DraftEditor-content")
                 editor.click()
                 editor.fill(post_description)
-                time.sleep(2)
+                
+                # 🔥 НОВЕ: Чекаємо 15 секунд, поки ТікТок проведе перевірку на авторські права
+                print("Чекаю 15 секунд на фонові перевірки TikTok...")
+                time.sleep(15)
                 
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 time.sleep(2)
                 
-                if action.lower() == "publish":
-                    action_button = page.locator("button:has-text('Post'), button:has-text('Опублікувати')").last
-                    action_button.click(force=True)
-                    time.sleep(25) 
+                # 🔥 НОВЕ: Точний пошук кнопок. ТікТок прибрав кнопку Чернетки, тому ми завжди намагаємося публікувати
+                try:
+                    # Шукаємо кнопку, яка має ТОЧНО текст "Post" або "Опублікувати" (щоб не натиснути на "When to post")
+                    post_btn = page.locator('button:text-is("Post"), button:text-is("Опублікувати")').first
+                    if post_btn.is_visible():
+                        post_btn.click(force=True)
+                    else:
+                        # Запасний варіант: беремо останню кнопку з таким текстом
+                        page.locator("button", has_text=re.compile(r"Post|Опублікувати")).last.click(force=True)
+                        
+                    print("Натиснуто POST. Чекаю 25 секунд для завершення публікації...")
+                    time.sleep(25) # Чекаємо, поки відео фізично відправиться на сервер
                     status_msg = "ОПУБЛІКОВАНО В TIKTOK"
-                else:
-                    action_button = page.locator("button:has-text('Save to draft'), button:has-text('Save'), button:has-text('Чернетка')").last
-                    action_button.click(force=True)
-                    time.sleep(20) 
-                    status_msg = "ЗБЕРЕЖЕНО В ЧЕРНЕТКИ (додай музику з телефону!)"
-                
-                success_path = os.path.join(self.output_dir, f"success_{action}.png")
+                except Exception as e:
+                    print(f"Помилка натискання кнопки POST: {e}")
+                    status_msg = "ПОМИЛКА КЛІКУ ПО КНОПЦІ"
+
+                success_path = os.path.join(self.output_dir, f"success_publish.png")
                 page.screenshot(path=success_path)
                 browser.close()
                 
