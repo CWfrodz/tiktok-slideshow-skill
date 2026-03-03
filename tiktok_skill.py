@@ -108,9 +108,6 @@ class TikTokSlideshowTool:
                 time.sleep(10)
 
     def upload_video(self, selected_slide_numbers: list, post_description: str, action: str) -> str:
-        """Перетворює картинки на відео і завантажує в TikTok (у чернетки або одразу публікує).
-        Параметр action має бути 'draft' або 'publish'.
-        """
         if not os.path.exists(self.state_file):
             return "ПОМИЛКА: Файл tiktok_state.json не знайдено."
 
@@ -147,16 +144,21 @@ class TikTokSlideshowTool:
                 editor.fill(post_description)
                 time.sleep(2)
                 
-                # РОЗДІЛЕННЯ ЛОГІКИ: Чернетка чи Публікація
+                # 🔥 НОВЕ: Скролимо сторінку в самий низ, щоб кнопки збереження точно були в зоні видимості
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                time.sleep(2)
+                
                 if action.lower() == "publish":
-                    action_button = page.locator("button:has-text('Post'), button:has-text('Опублікувати')").first
-                    action_button.click()
+                    # Використовуємо .last, бо головні кнопки завжди внизу сторінки
+                    action_button = page.locator("button:has-text('Post'), button:has-text('Опублікувати')").last
+                    action_button.click(force=True) # force=True пробиває будь-які перекриття
                     time.sleep(15)
                     status_msg = "ОПУБЛІКОВАНО В TIKTOK"
                 else:
-                    action_button = page.locator("button:has-text('Save to draft'), button:has-text('Зберегти в чернетки'), button:has-text('Чернетка')").first
-                    action_button.click()
-                    time.sleep(10)
+                    # Шукаємо кнопку чернетки (додали варіант 'Save' про всяк випадок)
+                    action_button = page.locator("button:has-text('Save to draft'), button:has-text('Save'), button:has-text('Чернетка')").last
+                    action_button.click(force=True)
+                    time.sleep(15) # Збільшили час очікування, щоб ТікТок точно встиг зберегти
                     status_msg = "ЗБЕРЕЖЕНО В ЧЕРНЕТКИ (додай музику з телефону!)"
                 
                 success_path = os.path.join(self.output_dir, f"success_{action}.png")
