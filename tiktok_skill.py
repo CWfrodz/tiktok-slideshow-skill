@@ -176,7 +176,7 @@ class TikTokSlideshowTool:
                 page.screenshot(path=success_path)
                 browser.close()
                 
-                return f"УСПІХ: ВІДЕО {status_msg}! ВІДПРАВ ФАЙЛ {success_path} КОРИСТУВАЧУ. Також ВІДПРАВ ФАЙЛ {video_file} КОРИСТУВАЧУ."
+                return f"УСПІХ: ВІДЕО {status_msg}! ВІДПРАВ ФАЙЛ {success_path} КОРИСТУВАЧУ В ЧАТ ТЕЛЕГРАМУ. Також ВІДПРАВ ФАЙЛ {video_file} КОРИСТУВАЧУ В ЧАТ ТЕЛЕГРАМУ."
                 
         except Exception as e:
             return f"КРИТИЧНА ПОМИЛКА: {str(e)}"
