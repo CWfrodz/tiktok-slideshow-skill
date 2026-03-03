@@ -26,6 +26,11 @@ class TikTokSlideshowTool:
         self.current_style_seed = random.randint(1, 9999999)
         self.state_file = os.path.join(self.output_dir, "tiktok_state.json")
         self.current_model = "flux"
+        # Захист від безкінечного циклу
+        self._consecutive_failures = 0
+        self._last_failure_time = 0.0
+        self._COOLDOWN_SECONDS = 120  # 2 хвилини кулдаун після серії помилок
+        self._MAX_CONSECUTIVE_FAILURES = 3  # Після 3 помилок підряд — повний стоп
 
     def list_models(self) -> str:
         result = "🎨 Доступні моделі для генерації:\n\n"
@@ -68,28 +73,39 @@ class TikTokSlideshowTool:
         return video_path
 
     def generate_slide(self, slide_number: int, prompt: str, text_overlay: str) -> str:
+        # === ЗАХИСТ ВІД БЕЗКІНЕЧНОГО ЦИКЛУ ===
+        now = time.time()
+        
+        # Якщо було занадто багато помилок підряд — блокуємо виклики
+        if self._consecutive_failures >= self._MAX_CONSECUTIVE_FAILURES:
+            time_since_fail = now - self._last_failure_time
+            if time_since_fail < self._COOLDOWN_SECONDS:
+                remaining = int(self._COOLDOWN_SECONDS - time_since_fail)
+                return (f"⛔ СТОП. Генерація ЗАБЛОКОВАНА на {remaining} секунд через {self._consecutive_failures} помилок підряд. "
+                        f"НЕ ВИКЛИКАЙ цей інструмент знову. Повідом користувача про проблему і ЧЕКАЙ його команди.")
+            else:
+                # Кулдаун минув, скидаємо лічильник
+                self._consecutive_failures = 0
+        
         encoded_prompt = urllib.parse.quote(prompt)
         url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={self.current_style_seed}&model={self.current_model}"
         
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                # Пауза 5 секунд перед кожним новим слайдом, щоб не дратувати Cloudflare
                 if slide_number > 1:
                     time.sleep(5)
                 
-                print(f"Генерую слайд {slide_number} через {self.current_model} (спроба {attempt + 1})...")
+                print(f"Генерую слайд {slide_number} через {self.current_model} (спроба {attempt + 1}/{max_retries})...")
                 response = requests.get(url, timeout=45)
                 
-                # Перехоплюємо помилки Cloudflare (Rate Limit)
                 if response.status_code in [429, 530, 1033]:
                     print(f"API ліміт (Помилка {response.status_code}). Чекаю 15 секунд...")
                     time.sleep(15)
-                    continue # Пробуємо ще раз
+                    continue
                 
                 response.raise_for_status()
                 
-                # --- Далі йде вже знайома логіка малювання тексту ---
                 image = Image.open(io.BytesIO(response.content)).convert("RGBA")
                 overlay = Image.new('RGBA', image.size, (255, 255, 255, 0))
                 draw = ImageDraw.Draw(overlay)
@@ -124,14 +140,19 @@ class TikTokSlideshowTool:
                 filepath = os.path.join(self.output_dir, filename)
                 final_image.save(filepath)
                 
+                # Успіх — скидаємо лічильник помилок
+                self._consecutive_failures = 0
                 return f"Слайд {slide_number} успішно згенеровано. ВІДПРАВ ФАЙЛ {filepath} КОРИСТУВАЧУ."
                 
             except Exception as e:
-                # Якщо це остання спроба, повертаємо помилку агенту
                 if attempt == max_retries - 1:
-                    return f"ПОМИЛКА при генерації слайду {slide_number} після {max_retries} спроб: {str(e)}"
+                    # Фіксуємо помилку в лічильнику
+                    self._consecutive_failures += 1
+                    self._last_failure_time = time.time()
+                    return (f"⛔ ПОМИЛКА при генерації слайду {slide_number} після {max_retries} спроб: {str(e)}. "
+                            f"(Помилок підряд: {self._consecutive_failures}/{self._MAX_CONSECUTIVE_FAILURES}). "
+                            f"НЕ ПРОБУЙ ЗНОВУ АВТОМАТИЧНО. Повідом користувача і ЧЕКАЙ його рішення.")
                 
-                # Інакше чекаємо і пробуємо ще раз
                 print(f"Збій мережі: {e}. Чекаю 10 секунд перед повтором...")
                 time.sleep(10)
 
