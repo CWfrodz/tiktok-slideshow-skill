@@ -56,7 +56,7 @@ class TikTokSlideshowTool:
                 processed_paths.append(filepath)
             except Exception as e:
                 print(f"Помилка обробки {img_path}: {e}")
-                processed_paths.append(img_path) # У разі помилки беремо оригінал
+                processed_paths.append(img_path) 
                 
         return processed_paths
 
@@ -90,11 +90,9 @@ class TikTokSlideshowTool:
             return "ПОМИЛКА: Файл tiktok_state.json не знайдено."
 
         try:
-            # 1. Накладаємо текст і монтуємо відео
             processed_images = self._add_text_to_images(image_paths, overlay_texts)
             video_file = self._create_video_from_images(processed_images)
 
-            # 2. Відкриваємо браузер
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
                 context = browser.new_context(
@@ -107,13 +105,12 @@ class TikTokSlideshowTool:
                 page.goto("https://www.tiktok.com/creator-center/upload", timeout=60000)
                 time.sleep(8) 
                 
-                # 🔥 НОВЕ: Приймаємо кукі (Allow All), якщо плашка з'явилася
+                # Приймаємо кукі, якщо є плашка
                 try:
                     accept_button = page.locator("button:has-text('Allow all')").first
                     if accept_button.is_visible():
                         accept_button.click()
                         time.sleep(2)
-                        print("Кукі успішно прийнято.")
                 except:
                     pass
                 
@@ -123,31 +120,26 @@ class TikTokSlideshowTool:
 
                 print("Завантажую змонтоване відео...")
                 page.locator("input[type='file']").first.set_input_files(video_file)
-                time.sleep(25) # Чекаємо, поки відео обробиться сервером ТікТоку
+                time.sleep(25) 
                 
                 editor = page.locator(".public-DraftEditor-content")
                 editor.click()
                 editor.fill(post_description)
                 time.sleep(2)
                 
-                # Скролимо в самий низ
+                # Скролимо в самий низ сторінки
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 time.sleep(2)
                 
                 # Вибір дії: Публікація чи Чернетка
                 if action.lower() == "publish":
-                    # Шукаємо кнопку Post
                     action_button = page.locator("button:has-text('Post'), button:has-text('Опублікувати')").last
                     action_button.click(force=True)
-                    print("Натиснуто POST. Чекаю 25 секунд для завершення публікації...")
-                    # 🔥 НОВЕ: Залізобетонна пауза, щоб ТікТок встиг обробити клік і зберегти відео
                     time.sleep(25) 
                     status_msg = "ОПУБЛІКОВАНО В TIKTOK"
                 else:
-                    # Шукаємо кнопку Draft
                     action_button = page.locator("button:has-text('Save to draft'), button:has-text('Save'), button:has-text('Чернетка')").last
                     action_button.click(force=True)
-                    print("Натиснуто Зберегти в чернетки. Чекаю 20 секунд...")
                     time.sleep(20) 
                     status_msg = "ЗБЕРЕЖЕНО В ЧЕРНЕТКИ (додай музику з телефону!)"
                 
