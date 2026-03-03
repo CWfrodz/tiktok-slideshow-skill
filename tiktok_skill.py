@@ -14,38 +14,69 @@ class TikTokSlideshowTool:
         self.state_file = os.path.join(self.output_dir, "tiktok_state.json")
 
     def _add_text_to_images(self, image_paths: list, overlay_texts: list) -> list:
-        """Накладає текст на картинки, які згенерував агент."""
+        """Накладає адаптивний відцентрований текст на картинки."""
         processed_paths = []
-        for i, (img_path, text) in enumerate(zip(image_paths, overlay_texts)):
+        for i, (img_path, raw_text) in enumerate(zip(image_paths, overlay_texts)):
             if not os.path.exists(img_path):
                 continue
             try:
+                # Очищаємо текст від емодзі та складних символів (залишаємо кирилицю, латиницю, базову пунктуацію)
+                text = ''.join(c for c in raw_text if ord(c) < 0x2600)
+                
                 image = Image.open(img_path).convert("RGBA")
                 overlay = Image.new('RGBA', image.size, (255, 255, 255, 0))
                 draw = ImageDraw.Draw(overlay)
                 
                 try:
-                    font = ImageFont.truetype("arial.ttf", 50)
+                    font = ImageFont.truetype("arial.ttf", 55)
                 except IOError:
                     font = ImageFont.load_default()
                 
-                lines = textwrap.wrap(text, width=20)
-                line_height = 60
+                # Розбиваємо текст на рядки (максимум 25 символів у рядку, щоб точно влізло в ширину екрана)
+                lines = textwrap.wrap(text, width=25)
+                
+                # Універсальне визначення висоти рядка для різних версій Pillow
+                if hasattr(draw, 'textbbox'):
+                    line_height = draw.textbbox((0, 0), "Ag", font=font)[3] + 15
+                else:
+                    line_height = draw.textsize("Ag", font=font)[1] + 15
+                    
                 total_text_height = len(lines) * line_height
                 
-                start_x = 50
-                start_y = 1400 
-                padding = 20
+                # Знаходимо найширший рядок, щоб підігнати під нього чорну плашку
+                max_line_width = 0
+                for line in lines:
+                    if hasattr(draw, 'textbbox'):
+                        lw = draw.textbbox((0, 0), line, font=font)[2] - draw.textbbox((0, 0), line, font=font)[0]
+                    else:
+                        lw = draw.textsize(line, font=font)[0]
+                    if lw > max_line_width:
+                        max_line_width = lw
                 
-                draw.rectangle(
-                    [start_x - padding, start_y - padding, 
-                     start_x + 600, start_y + total_text_height + padding],
-                    fill=(0, 0, 0, 160) 
-                )
+                image_width = 1080
+                start_y = 1200 # Висота розміщення (щоб не перекривало опис відео в ТікТоці)
+                padding_x = 40
+                padding_y = 30
                 
+                # Координати адаптивної чорної плашки по центру
+                box_x1 = max(0, (image_width - max_line_width) // 2 - padding_x)
+                box_x2 = min(image_width, (image_width + max_line_width) // 2 + padding_x)
+                box_y1 = start_y - padding_y
+                box_y2 = start_y + total_text_height + padding_y
+                
+                # Малюємо плашку
+                draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill=(0, 0, 0, 180))
+                
+                # Пишемо ідеально відцентрований текст
                 current_y = start_y
                 for line in lines:
-                    draw.text((start_x, current_y), line, font=font, fill="white")
+                    if hasattr(draw, 'textbbox'):
+                        lw = draw.textbbox((0, 0), line, font=font)[2] - draw.textbbox((0, 0), line, font=font)[0]
+                    else:
+                        lw = draw.textsize(line, font=font)[0]
+                        
+                    line_x = (image_width - lw) // 2
+                    draw.text((line_x, current_y), line, font=font, fill="white")
                     current_y += line_height
                     
                 final_image = Image.alpha_composite(image, overlay).convert("RGB")
@@ -105,7 +136,6 @@ class TikTokSlideshowTool:
                 page.goto("https://www.tiktok.com/creator-center/upload", timeout=60000)
                 time.sleep(8) 
                 
-                # Приймаємо кукі, якщо є плашка
                 try:
                     accept_button = page.locator("button:has-text('Allow all')").first
                     if accept_button.is_visible():
@@ -127,11 +157,9 @@ class TikTokSlideshowTool:
                 editor.fill(post_description)
                 time.sleep(2)
                 
-                # Скролимо в самий низ сторінки
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 time.sleep(2)
                 
-                # Вибір дії: Публікація чи Чернетка
                 if action.lower() == "publish":
                     action_button = page.locator("button:has-text('Post'), button:has-text('Опублікувати')").last
                     action_button.click(force=True)
